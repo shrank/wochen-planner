@@ -1,0 +1,15 @@
+<?php
+// Database connection settings. Fill these in for your environment, or set
+// the DB_HOST/DB_NAME/DB_USER/DB_PASS environment variables (used by the
+// docker-compose setup) to override the defaults below.
+//
+// Copy this file to config.php and edit the values. config.php is ignored
+// by Git so your credentials never end up in version control.
+
+return [
+    'host'    => getenv('DB_HOST') ?: 'localhost',
+    'dbname'  => getenv('DB_NAME') ?: 'wochenplaner',
+    'user'    => getenv('DB_USER') ?: 'db_user',
+    'pass'    => getenv('DB_PASS') ?: 'db_password',
+    'charset' => 'utf8mb4',
+];

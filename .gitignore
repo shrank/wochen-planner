@@ -1,0 +1,14 @@
+# Local configuration (contains database credentials)
+config.php
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / editor files
+.idea/
+.vscode/
+*.code-workspace
+
+# Logs and temporary files
+*.log
