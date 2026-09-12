@@ -56,13 +56,6 @@ The database schema is imported automatically on the first start.
 
 4. Open the app through HTTP or HTTPS. It must be served from the same directory as `api.php`; opening `index.html` directly as a `file://` URL will not work because the browser's `fetch()` calls need an HTTP origin.
 
-## Upgrading an existing database
-
-If you already have a database from before the week-close and optimistic-locking features, run the migration once:
-
-```bash
-mysql -u <user> -p <database> < migrate_optimistic_locking.sql
-```
 
 ## Usage
 
@@ -76,8 +69,6 @@ mysql -u <user> -p <database> < migrate_optimistic_locking.sql
 There is **no built-in authentication**. Anything that can reach `api.php` can read and write all week data. Before exposing the app to the public internet, place it behind a reverse proxy, VPN, HTTP Basic Auth (e.g. `.htaccess`), or another access-control layer.
 
 ## API overview
-
-For the full backend documentation, see [`BACKEND.md`](BACKEND.md).
 
 - `GET api.php?week=YYYY-MM-DD` — load a week.
 - `GET api.php?week=YYYY-MM-DD&revision_only=1` — lightweight revision poll.
