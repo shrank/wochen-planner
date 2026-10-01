@@ -13,6 +13,7 @@ A lightweight, paper-like weekly planning web app. Track appointments, a shoppin
 - Status dots to mark entries as done
 - Long-press an entry, then tap a target slot to move it within the same week or into another week
 - Close a week: open **Kaufen** and **Diverses** items are carried over to the next week
+- Add a date to a **Diverses** or day-grid item and it automatically moves to that day's column
 - Optimistic locking with a conflict-resolution dialog when multiple devices edit the same week
 - Auto-save with a status pill and a local backup of unsaved changes
 - 90° rotation mode for tablets
@@ -62,6 +63,7 @@ The database schema is imported automatically on the first start.
 - Tap an entry to open the edit dialog.
 - Tap the dot next to an entry to toggle its done status.
 - Long-press an entry for about 350 ms, then tap the target slot to move it.
+- Set a date on a **Diverses** or day-grid entry to have it jump to that day's column automatically.
 - Use **Woche abschließen** to mark the current week closed and carry open shopping/misc items into the next week.
 
 ## Security note

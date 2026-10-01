@@ -8,6 +8,7 @@ Thumbs.db
 # IDE / editor files
 .idea/
 .vscode/
+.cline/
 *.code-workspace
 
 # Logs and temporary files

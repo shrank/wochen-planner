@@ -1379,9 +1379,9 @@ function removeFromLocation(loc){
   }
 }
 
-// A day-grid item (or an "Ausblick" note item) whose date is set is relocated
-// into that date's day column — same-week moves happen in memory, moves into
-// a different week are persisted directly against that week's stored data.
+// A day-grid item (or a note item in "Ausblick" / "Diverses") whose date is set
+// is relocated into that date's day column — same-week moves happen in memory,
+// moves into a different week are persisted directly against that week's stored data.
 async function relocateToDay(sourceLoc, val, targetMonday, targetDay){
   const sameWeek = weekParam(targetMonday) === weekParam(currentWeekStart);
 
@@ -1460,7 +1460,7 @@ async function saveModal(){
   };
 
   const relocatable = !!val.date && (
-    loc.type === 'day' || (loc.type === 'note' && loc.section === 'Ausblick')
+    loc.type === 'day' || (loc.type === 'note' && (loc.section === 'Ausblick' || loc.section === 'Diverses'))
   );
 
   modalSaving = true;
