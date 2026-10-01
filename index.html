@@ -146,6 +146,10 @@
     color:#8a6d1f;
     cursor:pointer;
   }
+  .save-status.cached{
+    background:#e6f2ff;
+    color:#2f6f9f;
+  }
 
   /* ===== Days grid ===== */
   .days-scroll{
@@ -681,11 +685,23 @@ function normalize(d){
   return d;
 }
 
-async function fetchWeekData(weekStart){
+async function fetchWeekData(weekStart, allowCached){
   const week = weekParam(weekStart);
-  const res = await fetch(`${API_URL}?week=${week}`);
-  if(!res.ok) throw new Error('HTTP ' + res.status);
-  return normalize(await res.json());
+  try{
+    const res = await fetch(`${API_URL}?week=${week}`);
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    return normalize(await res.json());
+  }catch(e){
+    if(allowCached){
+      const cached = loadCachedWeekFromLocal(weekStart);
+      if(cached){
+        const hit = normalize(cached.payload);
+        hit.revision = cached.revision || 0;
+        return hit;
+      }
+    }
+    throw e;
+  }
 }
 async function postWeekData(weekStart, weekData, baseRevision, force){
   const week = weekParam(weekStart);
@@ -717,7 +733,7 @@ async function loadWeek(){
   cancelMove();
   setSaveStatus('loading');
   try{
-    const loaded = await fetchWeekData(currentWeekStart);
+    const loaded = await fetchWeekData(currentWeekStart, true);
     data = loaded;
     currentRevision = loaded.revision || 0;
     saveBlocked = false;
@@ -731,7 +747,7 @@ async function loadWeek(){
     if(!data){
       data = normalize(defaultData());
     }
-    alert('Woche konnte nicht geladen werden. Änderungen werden nicht gespeichert, bis die Verbindung wieder steht.');
+    alert('Woche konnte nicht geladen werden. Offline-Zwischenspeicher wird angezeigt, falls vorhanden.');
   }
   render();
   loadNextWeekPreview();
@@ -749,7 +765,7 @@ async function loadNextWeekPreview(){
 
   let preview = [];
   try{
-    const nextData = await fetchWeekData(nextMonday);
+    const nextData = await fetchWeekData(nextMonday, true);
     DAYS.forEach(day => {
       nextData.days[day].forEach(slot => {
         if(!isItemEmpty(slot)) preview.push({day, ...slot});
@@ -781,6 +797,7 @@ async function saveWeek(){
   const weekSnapshot = currentWeekStart;
   const payload = data;
   const baseRevision = currentRevision;
+  cacheWeekToLocal(weekSnapshot, payload, baseRevision);
   let attempt = 0;
   while(true){
     try{
@@ -791,6 +808,7 @@ async function saveWeek(){
       saveInFlight = false;
       saveErrorAlerted = false;
       clearLocalBackup(weekSnapshot);
+      cacheWeekToLocal(weekSnapshot, payload, result.revision);
       setSaveStatus('saved');
       if(reDirty){
         reDirty = false;
@@ -835,6 +853,7 @@ function setSaveStatus(state, message){
     loading: 'Laden…',
     saving: 'Speichern…',
     saved: 'Gespeichert',
+    cached: 'Offline verfügbar',
     pending: 'Speichern anstehend…',
     'error-save': 'Nicht gespeichert – tippen zum Wiederholen',
     'error-load': 'Laden fehlgeschlagen',
@@ -850,12 +869,27 @@ function setSaveStatus(state, message){
       if(st === 'error-save') scheduleSave();
       else if(st === 'error-load') loadWeek();
       else if(st === 'conflict' && lastConflict) showConflictPrompt();
+      else if(st === 'cached'){
+        const cached = loadCachedWeekFromLocal(currentWeekStart);
+        if(cached){
+          data = normalize(cached.payload);
+          currentRevision = cached.revision || 0;
+          saveBlocked = false;
+          saveErrorAlerted = false;
+          setSaveStatus('cached', 'Offline-Daten geladen');
+          render();
+          scheduleSave();
+        }
+      }
     });
   }
 }
 
 function localBackupKey(weekStart){
   return 'wp_backup_' + weekParam(weekStart);
+}
+function localCacheKey(weekStart){
+  return 'wp_cache_' + weekParam(weekStart);
 }
 function backupWeekToLocal(weekStart, payload, baseRevision){
   try{
@@ -870,6 +904,34 @@ function backupWeekToLocal(weekStart, payload, baseRevision){
 function clearLocalBackup(weekStart){
   try{
     localStorage.removeItem(localBackupKey(weekStart));
+  }catch(_){}
+}
+function cacheWeekToLocal(weekStart, payload, revision){
+  try{
+    localStorage.setItem(localCacheKey(weekStart), JSON.stringify({
+      week: weekParam(weekStart),
+      revision,
+      payload,
+      savedAt: Date.now()
+    }));
+  }catch(_){}
+}
+function loadCachedWeekFromLocal(weekStart){
+  try{
+    const raw = localStorage.getItem(localCacheKey(weekStart));
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    if(!parsed || !parsed.payload || parsed.week !== weekParam(weekStart)) return null;
+    if(Date.now() - (parsed.savedAt || 0) > BACKUP_TTL_MS){
+      localStorage.removeItem(localCacheKey(weekStart));
+      return null;
+    }
+    return parsed;
+  }catch(_){ return null; }
+}
+function clearLocalCache(weekStart){
+  try{
+    localStorage.removeItem(localCacheKey(weekStart));
   }catch(_){}
 }
 

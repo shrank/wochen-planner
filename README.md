@@ -16,6 +16,7 @@ A lightweight, paper-like weekly planning web app. Track appointments, a shoppin
 - Add a date to a **Diverses** or day-grid item and it automatically moves to that day's column
 - Optimistic locking with a conflict-resolution dialog when multiple devices edit the same week
 - Auto-save with a status pill and a local backup of unsaved changes
+- Current week's data is cached in localStorage so the planner stays usable without internet
 - 90° rotation mode for tablets
 
 ## Tech stack
