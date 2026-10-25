@@ -11,6 +11,7 @@ A lightweight, paper-like weekly planning web app. Track appointments, a shoppin
 - 7 days with 8 appointment/task slots each
 - Three note sections: **Diverses**, **Kaufen**, and **Ausblick**
 - Status dots to mark entries as done
+- **Ausblick** previews next week's entries; items already marked as done are hidden
 - Long-press an entry, then tap a target slot to move it within the same week or into another week
 - Close a week: open **Kaufen** and **Diverses** items are carried over to the next week
 - Add a date to a **Diverses** or day-grid item and it automatically moves to that day's column

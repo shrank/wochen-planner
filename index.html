@@ -754,10 +754,10 @@ async function loadWeek(){
   scheduleRevisionPoll();
 }
 
-// Fetches next week's day-grid items for the "Ausblick" lookahead. Runs
-// independently of loadWeek() so it never delays showing the current week;
-// a request-id guard drops stale results if the user navigates again before
-// this resolves.
+// Fetches next week's day-grid items for the "Ausblick" lookahead; done
+// items are skipped. Runs independently of loadWeek() so it never delays
+// showing the current week; a request-id guard drops stale results if the
+// user navigates again before this resolves.
 async function loadNextWeekPreview(){
   const myRequestId = ++previewRequestId;
   const nextMonday = new Date(currentWeekStart);
@@ -768,7 +768,7 @@ async function loadNextWeekPreview(){
     const nextData = await fetchWeekData(nextMonday, true);
     DAYS.forEach(day => {
       nextData.days[day].forEach(slot => {
-        if(!isItemEmpty(slot)) preview.push({day, ...slot});
+        if(!isItemEmpty(slot) && !slot.done) preview.push({day, ...slot});
       });
     });
   }catch(e){
