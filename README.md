@@ -9,6 +9,8 @@ A lightweight, paper-like weekly planning web app. Track appointments, a shoppin
 ## Features
 
 - 7 days with 8 appointment/task slots each
+- Header shows the calendar week (KW) and the date range of the viewed week
+- The current day's column is highlighted when you view the current week
 - Three note sections: **Diverses**, **Kaufen**, and **Ausblick**
 - Status dots to mark entries as done
 - **Ausblick** previews next week's entries; items already marked as done are hidden

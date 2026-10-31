@@ -202,6 +202,16 @@
     color:var(--ink-soft);
     font-weight:500;
   }
+  /* current-day highlight (only when viewing the week that contains today) */
+  .day-col.today{ background:#FBF3E6; }
+  .day-col.today .day-head{ border-bottom-color:var(--margin); }
+  .day-col.today .day-head span:first-child{ color:var(--margin); }
+  .day-col.today .day-head .datenum{
+    color:var(--margin);
+    border:1.5px solid var(--margin);
+    border-radius:8px;
+    padding:0 5px;
+  }
   .slot{
     display:flex;
     align-items:flex-start;
@@ -560,6 +570,7 @@ const SLOTS_PER_DAY = 8;
 
 const daysGrid = document.getElementById('daysGrid');
 const notesRow = document.getElementById('notesRow');
+const weekLabel = document.getElementById('weekLabel');
 const weekRange = document.getElementById('weekRange');
 const closedMark = document.getElementById('closedMark');
 const closeWeekBtn = document.getElementById('closeWeekBtn');
@@ -617,6 +628,19 @@ function fmtDayNum(monday, idx){
   const d = new Date(monday);
   d.setDate(d.getDate()+idx);
   return d.getDate() + '.' + (d.getMonth()+1) + '.';
+}
+// ISO-8601 calendar week: anchor on the week's Thursday, week 1 contains Jan 4.
+function isoWeekNumber(monday){
+  const thursday = new Date(monday);
+  thursday.setDate(thursday.getDate() + 3);
+  const week1Monday = getMonday(new Date(thursday.getFullYear(), 0, 4));
+  return Math.floor(((thursday - week1Monday) / 86400000) / 7) + 1;
+}
+// 0-based index of today in DAYS when the viewed week contains today, else -1
+function todayDayIndex(){
+  const now = new Date();
+  if(weekParam(getMonday(now)) !== weekParam(currentWeekStart)) return -1;
+  return (now.getDay() + 6) % 7;
 }
 function uid(){ return Math.random().toString(36).slice(2,9); }
 
@@ -1005,7 +1029,10 @@ function escapeHtml(s){
 /* ===================== RENDER ===================== */
 
 function render(){
+  weekLabel.textContent = 'Wochenplaner – KW ' + isoWeekNumber(currentWeekStart);
   weekRange.textContent = fmtRange(currentWeekStart);
+
+  const todayIdx = todayDayIndex();
 
   closedMark.classList.toggle('show', !!data.closed);
   closeWeekBtn.textContent = data.closed ? 'Wieder öffnen' : 'Abschließen';
@@ -1014,7 +1041,7 @@ function render(){
   daysGrid.innerHTML = '';
   DAYS.forEach((day, idx) => {
     const col = document.createElement('div');
-    col.className = 'day-col';
+    col.className = 'day-col' + (idx === todayIdx ? ' today' : '');
     col.innerHTML = `<div class="day-head"><span>${day}</span><span class="datenum">${fmtDayNum(currentWeekStart, idx)}</span></div>`;
     const slotsWrap = document.createElement('div');
     slotsWrap.className = 'slots';
