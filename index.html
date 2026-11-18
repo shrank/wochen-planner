@@ -451,9 +451,13 @@
     padding:0 20px 14px;
   }
   .shit-body.open{ display:block; }
+  .shit-scroll{
+    overflow-x:auto;
+    padding:0 0 8px;
+  }
   .shit-grid{
     display:grid;
-    grid-template-columns:repeat(6, 1fr);
+    grid-template-columns:repeat(6, minmax(78px, 1fr));
     width:100%;
     border-top:1px solid var(--rule);
   }
@@ -622,7 +626,11 @@
       <span class="shit-count" id="shitCount"></span>
       <span class="shit-toggle" id="shitToggle">anzeigen</span>
     </div>
-    <div class="shit-body" id="shitBody"></div>
+    <div class="shit-body" id="shitBody">
+      <div class="shit-scroll">
+        <div class="shit-grid"></div>
+      </div>
+    </div>
   </div>
 
   <div class="footer-note" id="footerNote">Zum Bearbeiten tippen · Punkt anklicken zum Erledigen · lang drücken, dann Ziel antippen · gespeichert automatisch</div>
@@ -1721,16 +1729,16 @@ function cacheShitToLocal(items, revision){
 function renderShit(){
   const count = shit && shit.items ? shit.items.filter(i => !isItemEmpty(i)).length : 0;
   shitCount.textContent = count ? `(${count})` : '';
+  const grid = shitBody.querySelector('.shit-grid');
+  if(!grid) return; // static markup guarantees it — belt-and-braces guard
   if(!isShitSectionOpen()){
     // collapsed: only keep the count fresh, no cell DOM until opened
-    if(shitBody.childElementCount) shitBody.innerHTML = '';
+    if(grid.children.length) grid.replaceChildren();
     return;
   }
   if(!shitNeedsPaint) return; // nothing changed since the last build
   shitNeedsPaint = false;
-  shitBody.innerHTML = '';
-  const grid = document.createElement('div');
-  grid.className = 'shit-grid';
+  grid.replaceChildren();
   const total = shitCellCount();
   for(let i = 0; i < total; i++){
     const item = getShitItem(i);
@@ -1749,7 +1757,6 @@ function renderShit(){
     `;
     grid.appendChild(cell);
   }
-  shitBody.appendChild(grid);
   attachShitHandlers();
 }
 
