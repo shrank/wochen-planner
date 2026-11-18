@@ -414,6 +414,85 @@
     .titlebar{padding:0 16px 10px;flex-direction:column;align-items:flex-start;gap:6px;}
   }
 
+  /* ===== Shit-Liste (collapsible backlog) ===== */
+  .shit-section{
+    border-top:2px solid var(--ink);
+  }
+  .shit-head{
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+    padding:9px 20px 7px;
+    cursor:pointer;
+    -webkit-user-select:none;
+    user-select:none;
+    -webkit-touch-callout:none;
+  }
+  .shit-head h2{
+    font-weight:700;
+    font-size:1.05rem;
+    margin:0;
+    letter-spacing:0.5px;
+  }
+  .shit-count{
+    font-family:'Inter',sans-serif;
+    font-size:0.72rem;
+    color:var(--ink-soft);
+  }
+  .shit-toggle{
+    margin-left:auto;
+    font-family:'Inter',sans-serif;
+    font-size:0.78rem;
+    color:var(--ink-soft);
+  }
+  .shit-head:hover .shit-toggle{ color:var(--ink); }
+  .shit-body{
+    display:none;
+    padding:0 20px 14px;
+  }
+  .shit-body.open{ display:block; }
+  .shit-grid{
+    display:grid;
+    grid-template-columns:repeat(6, 1fr);
+    width:100%;
+    border-top:1px solid var(--rule);
+  }
+  .shit-cell{
+    display:flex;
+    align-items:flex-start;
+    gap:4px;
+    min-height:36px;
+    padding:5px 6px;
+    border-right:1px solid var(--rule);
+    border-bottom:1px solid var(--rule);
+  }
+  .shit-cell:nth-child(6n){ border-right:none; }
+  .shit-entry-wrap{
+    flex:1;
+    min-width:0;
+    cursor:pointer;
+  }
+  .shit-text{
+    outline:none;
+    font-size:0.95rem;
+    color:var(--ink);
+    min-width:0;
+    word-break:break-word;
+  }
+  .shit-text:empty::before{
+    content:attr(data-placeholder);
+    color:#c9c2ac;
+  }
+  .shit-text.done{
+    text-decoration:line-through;
+    color:var(--ink-soft);
+  }
+  .shit-cell.empty .del-btn{ display:none; }
+  .shit-cell:hover .del-btn{ opacity:0.6; }
+  .modal-actions-left{ display:flex; gap:8px; align-items:center; }
+  .modal-btn.shit-btn{ font-size:1rem; padding:5px 10px; line-height:1; }
+  .modal-btn.shit-btn.off{ display:none; }
+
   /* ===== Edit modal (always upright, independent of page rotation) ===== */
   .modal-overlay{
     position:fixed;
@@ -536,6 +615,16 @@
   </div>
 
   <div class="notes-row" id="notesRow"></div>
+
+  <div class="shit-section" id="shitSection">
+    <div class="shit-head" id="shitHead" role="button" tabindex="0" aria-expanded="false" aria-controls="shitBody">
+      <h2>💩 Shit-Liste</h2>
+      <span class="shit-count" id="shitCount"></span>
+      <span class="shit-toggle" id="shitToggle">anzeigen</span>
+    </div>
+    <div class="shit-body" id="shitBody"></div>
+  </div>
+
   <div class="footer-note" id="footerNote">Zum Bearbeiten tippen · Punkt anklicken zum Erledigen · lang drücken, dann Ziel antippen · gespeichert automatisch</div>
 </div>
 </div>
@@ -553,7 +642,10 @@
     <textarea id="modalText" placeholder="Text…" rows="5"></textarea>
     <div class="modal-hint">Erste Zeile erscheint in der Wochenübersicht.</div>
     <div class="modal-actions">
-      <button class="modal-btn danger" id="modalClear">Leeren</button>
+      <div class="modal-actions-left">
+        <button class="modal-btn danger" id="modalClear">Leeren</button>
+        <button class="modal-btn shit-btn" id="modalShit" title="Auf die Shit-Liste verschieben">💩</button>
+      </div>
       <div class="modal-actions-right">
         <button class="modal-btn" id="modalCancel">Abbrechen</button>
         <button class="modal-btn primary" id="modalSave">Speichern</button>
@@ -567,6 +659,11 @@ const DAYS = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","S
 const NOTE_SECTIONS = ["Diverses","Kaufen","Ausblick"];
 const DRAG_SECTIONS = ["Diverses","Kaufen"];
 const SLOTS_PER_DAY = 8;
+const SHIT_COLS = 6;
+const SHIT_MIN_CELLS = 48;
+const SHIT_MAX_ITEMS = 400;
+const SHIT_MAX_TEXT_BYTES = 8000; // must match the per-item limit in api.php
+function textTooLong(t){ return new TextEncoder().encode(t || '').length > SHIT_MAX_TEXT_BYTES; }
 
 const daysGrid = document.getElementById('daysGrid');
 const notesRow = document.getElementById('notesRow');
@@ -574,6 +671,10 @@ const weekLabel = document.getElementById('weekLabel');
 const weekRange = document.getElementById('weekRange');
 const closedMark = document.getElementById('closedMark');
 const closeWeekBtn = document.getElementById('closeWeekBtn');
+const shitHead = document.getElementById('shitHead');
+const shitBody = document.getElementById('shitBody');
+const shitToggle = document.getElementById('shitToggle');
+const shitCount = document.getElementById('shitCount');
 
 let currentWeekStart = getMonday(new Date());
 let data = null;
@@ -588,6 +689,19 @@ let saveBlocked = false;
 let revisionPollTimer = null;
 let lastConflict = null;
 let saveErrorAlerted = false;
+let shit = null; // { items: [{text,date,time,done}], revision } — global backlog
+let shitDirty = false;
+let shitSaveTimer = null;
+let shitInFlight = false;
+let shitReDirty = false;
+let shitSaveErrorAlerted = false;
+let shitSaveFailed = false;
+let shitNeedsPaint = true;
+let weekSaveFailed = false;
+let shitCapAlerted = false;
+let shitTooLongAlerted = false;
+let shitConflictResolving = false; // conflict dialog running: backlog-cell dialogs/moves blocked
+let shitMoveSeq = 0;
 const SAVE_DEBOUNCE_MS = 400;
 const MAX_RETRIES = 2;
 const BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -727,20 +841,15 @@ async function fetchWeekData(weekStart, allowCached){
     throw e;
   }
 }
-async function postWeekData(weekStart, weekData, baseRevision, force){
-  const week = weekParam(weekStart);
-  const body = {
-    week,
-    days: weekData.days,
-    notes: weekData.notes,
-    closed: !!weekData.closed,
-    base_revision: baseRevision
-  };
-  if(force) body.force = true;
+async function postApiJson(body){
+  // keepalive lets the unload-time flushes survive the tab closing; the spec
+  // rejects keepalive bodies over 64 KB, so large payloads skip the flag
+  const text = JSON.stringify(body);
   const res = await fetch(API_URL, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)
+    body: text,
+    keepalive: text.length < 60000
   });
   const respBody = await res.json().catch(() => ({}));
   if(!res.ok){
@@ -752,6 +861,18 @@ async function postWeekData(weekStart, weekData, baseRevision, force){
   }
   return respBody;
 }
+async function postWeekData(weekStart, weekData, baseRevision, force){
+  const week = weekParam(weekStart);
+  const body = {
+    week,
+    days: weekData.days,
+    notes: weekData.notes,
+    closed: !!weekData.closed,
+    base_revision: baseRevision
+  };
+  if(force) body.force = true;
+  return postApiJson(body);
+}
 
 async function loadWeek(){
   cancelMove();
@@ -762,8 +883,9 @@ async function loadWeek(){
     currentRevision = loaded.revision || 0;
     saveBlocked = false;
     saveErrorAlerted = false;
+    weekSaveFailed = false;
     clearLocalBackup(currentWeekStart);
-    setSaveStatus('saved');
+    setSaveStatus(shitSaveFailed ? 'error-save' : 'saved');
   }catch(e){
     console.error('Laden fehlgeschlagen', e);
     saveBlocked = true;
@@ -819,9 +941,25 @@ async function saveWeek(){
   saveInFlight = true;
   setSaveStatus('saving');
   const weekSnapshot = currentWeekStart;
-  const payload = data;
+  const payload = JSON.parse(JSON.stringify(data)); // snapshot: retries must not pick up later edits
+  const seqAtCopy = shitMoveSeq;
   const baseRevision = currentRevision;
   cacheWeekToLocal(weekSnapshot, payload, baseRevision);
+  const longText = Object.values(payload.days || {}).some(list => list.some(it => textTooLong(it.text)))
+    || Object.values(payload.notes || {}).some(list => list.some(it => textTooLong(it.text)));
+  if(longText){
+    // permanent client error: don't send a doomed payload, tell the user why
+    saveInFlight = false;
+    dirty = true;
+    weekSaveFailed = true;
+    backupWeekToLocal(weekSnapshot, payload, baseRevision);
+    if(shitCanUsePill()) setSaveStatus('error-save');
+    if(!saveErrorAlerted){
+      saveErrorAlerted = true;
+      alert('Ein Eintrag ist zu lang (max 8000 Byte). Bitte kürze ihn und tippe auf die Statusanzeige, um erneut zu speichern.');
+    }
+    return;
+  }
   let attempt = 0;
   while(true){
     try{
@@ -833,7 +971,18 @@ async function saveWeek(){
       saveErrorAlerted = false;
       clearLocalBackup(weekSnapshot);
       cacheWeekToLocal(weekSnapshot, payload, result.revision);
-      setSaveStatus('saved');
+      weekSaveFailed = false;
+      if(lastShitMoveToWeek && lastShitMoveToWeek.seq <= seqAtCopy
+         && lastShitMoveToWeek.week === weekParam(weekSnapshot)){
+        lastShitMoveToWeek = null; // the saved week snapshot included this move
+      }
+      if(shitSaveFailed){
+        setSaveStatus('error-save'); // the backlog still needs attention
+      }else if((shitDirty || shitInFlight) && shitCanUsePill()){
+        setSaveStatus('pending'); // the backlog save is still running
+      }else{
+        setSaveStatus('saved');
+      }
       if(reDirty){
         reDirty = false;
         dirty = true;
@@ -847,11 +996,26 @@ async function saveWeek(){
         handleConflict(e.response, payload, weekSnapshot);
         return;
       }
+      if(e.status === 400){
+        // permanent client error (e.g. overlong item text): no retry
+        saveInFlight = false;
+        dirty = true;
+        weekSaveFailed = true;
+        backupWeekToLocal(weekSnapshot, payload, baseRevision);
+        if(shitCanUsePill()) setSaveStatus('error-save');
+        if(!saveErrorAlerted){
+          saveErrorAlerted = true;
+          alert('Der Server hat die Änderung abgelehnt (z. B. Eintrag zu lang). Bitte korrigiere und tippe auf die Statusanzeige.');
+        }
+        console.error('Speichern abgelehnt (400)', e);
+        return;
+      }
       if(attempt > MAX_RETRIES){
         saveInFlight = false;
         dirty = true;
         backupWeekToLocal(weekSnapshot, payload, baseRevision);
-        setSaveStatus('error-save');
+        weekSaveFailed = true;
+        if(shitCanUsePill()) setSaveStatus('error-save'); // leave a pending conflict/offline pill untouched
         if(!saveErrorAlerted){
           saveErrorAlerted = true;
           alert('Die letzte Änderung konnte nicht gespeichert werden. Sie wurde lokal zwischengespeichert – tippe auf die Statusanzeige, um es erneut zu versuchen.');
@@ -890,7 +1054,7 @@ function setSaveStatus(state, message){
     el._hasClick = true;
     el.addEventListener('click', () => {
       const st = el.dataset.state;
-      if(st === 'error-save') scheduleSave();
+      if(st === 'error-save'){ if(dirty || reDirty) scheduleSave(); if(shitDirty || shitReDirty) scheduleShitSave(); }
       else if(st === 'error-load') loadWeek();
       else if(st === 'conflict' && lastConflict) showConflictPrompt();
       else if(st === 'cached'){
@@ -953,12 +1117,6 @@ function loadCachedWeekFromLocal(weekStart){
     return parsed;
   }catch(_){ return null; }
 }
-function clearLocalCache(weekStart){
-  try{
-    localStorage.removeItem(localCacheKey(weekStart));
-  }catch(_){}
-}
-
 function showConflictPrompt(){
   if(!lastConflict) return;
   handleConflict(lastConflict.response, lastConflict.payload, lastConflict.week, true);
@@ -980,7 +1138,8 @@ async function handleConflict(response, ourPayload, weekSnapshot, fromPrompt){
         currentRevision = result.revision;
       }
       clearLocalBackup(weekSnapshot);
-      setSaveStatus('saved');
+      weekSaveFailed = false;
+      setSaveStatus(shitSaveFailed ? 'error-save' : 'saved');
       lastConflict = null;
     }catch(e){
       setSaveStatus('error-save');
@@ -989,9 +1148,12 @@ async function handleConflict(response, ourPayload, weekSnapshot, fromPrompt){
   }else{
     if(server && weekSnapshot.getTime() === currentWeekStart.getTime()){
       data = normalize(server);
+      reinsertShitMoveIntoWeek();
+      scheduleSave(); // persist the re-inserted entry (idempotent when unchanged)
       currentRevision = server.revision || response.revision || 0;
       clearLocalBackup(weekSnapshot);
-      setSaveStatus('saved');
+      weekSaveFailed = false;
+      setSaveStatus(shitSaveFailed ? 'error-save' : 'pending'); // scheduleSave just queued a save
       lastConflict = null;
       render();
     }
@@ -1004,10 +1166,23 @@ async function handleConflict(response, ourPayload, weekSnapshot, fromPrompt){
 function scheduleRevisionPoll(){
   if(revisionPollTimer) clearInterval(revisionPollTimer);
   revisionPollTimer = setInterval(async () => {
-    if(document.hidden || saveBlocked || !currentWeekStart || saveInFlight) return;
-    try{
-      const week = weekParam(currentWeekStart);
-      const res = await fetch(`${API_URL}?week=${week}&revision_only=1`);
+    if(document.hidden) return;
+    // shit-list changed elsewhere? (loadShit's guard keeps pending edits intact)
+    if(shit && !shitDirty && !shitReDirty && !shitInFlight){
+      try{
+        const shitRes = await fetch(`${API_URL}?shitlist=1&revision_only=1`);
+        if(shitRes.ok){
+          const shitInfo = await shitRes.json();
+          if(typeof shitInfo.revision === 'number' && shitInfo.revision !== shit.revision){
+            loadShit();
+          }
+        }
+      }catch(_){}
+    }
+    if(!saveBlocked && currentWeekStart && !saveInFlight){
+      try{
+        const week = weekParam(currentWeekStart);
+        const res = await fetch(`${API_URL}?week=${week}&revision_only=1`);
       if(!res.ok) return;
       const info = await res.json();
       if(info.revision !== currentRevision){
@@ -1018,7 +1193,8 @@ function scheduleRevisionPoll(){
           loadWeek();
         }
       }
-    }catch(_){}
+      }catch(_){}
+    }
   }, 20000);
 }
 
@@ -1126,6 +1302,7 @@ function render(){
   });
 
   attachHandlers();
+  renderShit();
   applyMoveHighlight();
 }
 
@@ -1203,6 +1380,428 @@ function removeNoteItemById(section, id){
   if(idx > -1) arr.splice(idx, 1);
 }
 
+/* ===================== SHIT-LISTE ===================== */
+/* Global backlog section at the bottom of the page. Index-addressable like
+   the day grid: empty cells are editable, holes between items stay put, and
+   the grid always shows at least SHIT_MIN_CELLS cells and grows downwards. */
+
+function getShitItem(index){
+  const item = shit && shit.items ? shit.items[index] : null;
+  return item ? {text:item.text, date:item.date, time:item.time, done:item.done}
+              : {text:'', date:'', time:'', done:false};
+}
+// Writes a cell in place, padding holes before the index; trailing holes are trimmed.
+function setShitItem(index, val){
+  if(!shit || !Array.isArray(shit.items) || index < 0) return;
+  if(index >= SHIT_MAX_ITEMS){ flashFooterHint('Die Shit-Liste ist voll (max 400 Einträge).'); return; }
+  shitNeedsPaint = true;
+  while(shit.items.length < index) shit.items.push(emptySlot());
+  shit.items[index] = {text: val.text || '', date: val.date || '', time: val.time || '', done: !!val.done};
+  while(shit.items.length && isItemEmpty(shit.items[shit.items.length - 1])) shit.items.pop();
+}
+function shitCellCount(){
+  const len = shit && shit.items ? shit.items.length : 0;
+  // always leave at least one tappable empty cell, even when the grid is "full";
+  // never render beyond the cap — unreachable cells would silently lose moved entries
+  return Math.min(SHIT_MAX_ITEMS, Math.max(SHIT_MIN_CELLS, Math.ceil((len + 1) / SHIT_COLS) * SHIT_COLS));
+}
+function normalizeShit(d){
+  if(Array.isArray(d)) d = { items: d }; // accept both shapes so misuse cannot wipe a list
+  d = d || {};
+  if(!Array.isArray(d.items)) d.items = [];
+  d.items = d.items.map(s => ({
+    text: (s && s.text) || '',
+    date: (s && s.date) || '',
+    time: (s && s.time) || '',
+    done: !!(s && s.done)
+  }));
+  while(d.items.length && isItemEmpty(d.items[d.items.length - 1])) d.items.pop();
+  return d;
+}
+
+async function fetchShitlist(){
+  const res = await fetch(`${API_URL}?shitlist=1`);
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  return normalizeShit(await res.json());
+}
+async function postShitlist(items, baseRevision){
+  // a force flag is deliberately absent: api.php rejects it for the shit-list
+  const body = { type: 'shitlist', items, base_revision: baseRevision };
+  return postApiJson(body);
+}
+
+function backupShitToLocal(items, baseRevision){
+  try{
+    localStorage.setItem('wp_shit_backup', JSON.stringify({ items, base_revision: baseRevision, savedAt: Date.now() }));
+  }catch(_){}
+}
+function clearLocalShitBackup(){
+  try{ localStorage.removeItem('wp_shit_backup'); }catch(_){}
+}
+function loadShitBackupFromLocal(){
+  try{
+    const raw = localStorage.getItem('wp_shit_backup');
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    if(!parsed || !Array.isArray(parsed.items)) return null;
+    if(BACKUP_TTL_MS < Date.now() - (parsed.savedAt || 0)){
+      localStorage.removeItem('wp_shit_backup');
+      return null;
+    }
+    return parsed;
+  }catch(_){ return null; }
+}
+
+// Restores edits of a failed save from an earlier session, otherwise loads the
+// server list. Never runs while a backlog save is pending or in flight,
+// because that would clobber the freshly saved state with an older server copy.
+async function loadShit(){
+  if(shitDirty || shitInFlight || shitReDirty || modalLoc || moveSource) return; // stay out of open dialogs and pending moves
+  const backup = loadShitBackupFromLocal();
+  if(backup){
+    shit = { items: normalizeShit({ items: backup.items }).items, revision: backup.base_revision || 0 };
+    shitDirty = true;
+    scheduleShitSave();
+  }else{
+    try{
+      const fetched = normalizeShit(await fetchShitlist());
+      // an edit, dialog or move may have appeared while the request was running
+      if(shitDirty || shitInFlight || shitReDirty || modalLoc || moveSource) return;
+      // a save that finished while this GET ran produced a newer revision
+      if(shit && typeof shit.revision === 'number' && typeof fetched.revision === 'number' && fetched.revision < shit.revision) return;
+      // Migration state keeps its flag; a backup can only exist with a save in
+      // flight (caught by the guard above), so there is nothing to rescue here.
+      shit = fetched;
+      if(!fetched.migration) cacheShitToLocal(shit.items, shit.revision);
+    }catch(e){
+      console.error('Shit-Liste konnte nicht geladen werden', e);
+      // the same guards apply: keep newer local state instead of stale cache
+      if(shitDirty || shitInFlight || shitReDirty || modalLoc || moveSource) return;
+      const cached = loadShitFromLocal();
+      shit = { items: cached ? cached.items : [], revision: cached ? (cached.revision || 0) : 0 };
+    }
+  }
+  shitNeedsPaint = true;
+  renderShit();
+  updateShitBtnState();
+}
+
+function shitCanUsePill(){
+  const el = document.getElementById('saveStatus');
+  if(!el) return false;
+  const st = el.dataset.state;
+  // 'saving' counts too, so an error path can never strand the pill in 'saving'
+  return st === 'idle' || st === 'saving' || st === 'saved' || st === 'pending';
+}
+
+function scheduleShitSave(){
+  if(shitSaveTimer) clearTimeout(shitSaveTimer);
+  shitDirty = true;
+  if(!saveInFlight && shitCanUsePill()) setSaveStatus('pending');
+  shitSaveTimer = setTimeout(saveShitlist, SAVE_DEBOUNCE_MS);
+}
+
+async function flushShitSave(){
+  if(shitSaveTimer){ clearTimeout(shitSaveTimer); shitSaveTimer = null; }
+  if(shitDirty || shitReDirty) await saveShitlist();
+}
+
+async function saveShitlist(){
+  if(!shitDirty || !shit) return;
+  if(shitInFlight){ shitReDirty = true; return; }
+  shitDirty = false;
+  shitInFlight = true;
+  if(!saveInFlight && shitCanUsePill()) setSaveStatus('saving'); // backlog-only saves stay visible in the pill
+  const payloadItems = JSON.parse(JSON.stringify(shit.items)); // snapshot: retries must not pick up later edits
+  const seqAtCopy = shitMoveSeq;
+  const baseRevision = shit.revision;
+  cacheShitToLocal(payloadItems, baseRevision);
+  const tooLong = payloadItems.find(it => textTooLong(it.text));
+  if(tooLong){
+    // permanent client error: don't send a doomed payload, tell the user why
+    shitInFlight = false;
+    shitDirty = true;
+    shitSaveFailed = true;
+    backupShitToLocal(payloadItems, baseRevision);
+    if(shitCanUsePill()) setSaveStatus('error-save'); // leave a pending conflict/offline pill untouched
+    if(!shitTooLongAlerted){
+      shitTooLongAlerted = true;
+      alert('Ein Eintrag ist zu lang (max 8000 Byte). Bitte kürze ihn und tippe auf die Statusanzeige, um erneut zu speichern.');
+    }
+    return;
+  }
+  let attempt = 0;
+  while(true){
+    try{
+      const result = await postShitlist(payloadItems, baseRevision);
+      shit.revision = result.revision;
+      shitInFlight = false;
+      shitSaveErrorAlerted = false;
+      shitSaveFailed = false;
+      clearLocalShitBackup();
+      cacheShitToLocal(payloadItems, result.revision);
+      if(lastWeekMoveToShit && lastWeekMoveToShit.seq <= seqAtCopy) lastWeekMoveToShit = null;
+      shitCapAlerted = false;
+      shitTooLongAlerted = false;
+      if(shitReDirty){
+        shitReDirty = false;
+        shitDirty = true;
+        scheduleShitSave();
+      }else if(!saveInFlight && !dirty && !reDirty && weekSaveFailed){
+        setSaveStatus('error-save');
+      }else if(!saveInFlight && !dirty && !reDirty && shitCanUsePill()){
+        setSaveStatus('saved');
+      }
+      return;
+    }catch(e){
+      attempt++;
+      if(e.status === 409){
+        shitInFlight = false;
+        shitReDirty = false;
+        handleShitConflict(e.response);
+        return;
+      }
+      if(e.status === 400){
+        // permanent client error (e.g. item cap): no retry, keep a local backup
+        shitInFlight = false;
+        shitDirty = true;
+        shitSaveFailed = true;
+        backupShitToLocal(payloadItems, baseRevision);
+        if(shitCanUsePill()) setSaveStatus('error-save'); // leave a pending conflict/offline pill untouched
+        if(!shitCapAlerted){
+          shitCapAlerted = true;
+          alert('Der Server hat die Shit-Liste abgelehnt (z. B. mehr als 400 Einträge). Bitte lösche einige Einträge.');
+        }
+        return;
+      }
+      if(attempt > MAX_RETRIES){
+        shitInFlight = false;
+        shitDirty = true;
+        shitSaveFailed = true;
+        backupShitToLocal(payloadItems, baseRevision);
+        if(shitCanUsePill()) setSaveStatus('error-save'); // leave a pending conflict/offline pill untouched
+        if(!shitSaveErrorAlerted){
+          shitSaveErrorAlerted = true;
+          alert('Die Shit-Liste konnte nicht gespeichert werden – tippe auf die Statusanzeige, um es erneut zu versuchen.');
+        }
+        console.error('Shit-Liste speichern fehlgeschlagen', e);
+        return;
+      }
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
+  }
+}
+
+// Merges the server list with our pending items: the server keeps the
+// positions, local entries that the server lacks are appended (non-destructive).
+// Content identity of a backlog item: merge matching includes done, dedup
+// checks compare text/date/time only so a done-toggle is a real difference.
+function shitContentKey(it, withDone){
+  return JSON.stringify(withDone
+    ? [it.text, it.date, it.time, !!it.done]
+    : [it.text, it.date, it.time]);
+}
+let shitMergeOverflow = null; // entries the last merge dropped because of the 400 cap
+function mergeShitItems(serverItems, localItems){
+  const keyOf = (it) => shitContentKey(it, true);
+  const seen = new Set(serverItems.map(keyOf));
+  const extra = [];
+  (localItems || []).forEach(it => {
+    if(!it || isItemEmpty(it)) return;
+    const k = keyOf(it);
+    if(!seen.has(k)){ extra.push(it); seen.add(k); }
+  });
+  const merged = normalizeShit({ items: [...serverItems, ...extra] }).items;
+  // the save payload must stay under the cap; server entries keep their spots first
+  shitMergeOverflow = merged.length > SHIT_MAX_ITEMS ? merged.slice(SHIT_MAX_ITEMS) : null;
+  return shitMergeOverflow ? merged.slice(0, SHIT_MAX_ITEMS) : merged;
+}
+
+async function handleShitConflict(response){
+  shitInFlight = true; // block parallel saves while the dialog is open
+  shitConflictResolving = true; // backlog-cell dialogs/moves must not start: indices would go stale
+  // Both options are safe for the server: merge keeps the server entries and
+  // appends ours; discarding local new entries needs a second confirmation.
+  const msg = 'Die Shit-Liste wurde zwischenzeitlich anderswo geändert.\n„OK“ = zusammenführen (Server-Einträge + neue Einträge behalten).\n„Abbrechen“ = Server-Version laden (eigene neue Einträge verwerfen).';
+  const server = response && response.server;
+  const serverRevision = (server && server.revision) || (response && response.revision) || 0;
+  if(modalLoc || moveSource){
+    // resolving now would invalidate open dialog/move positions — plain error path
+    shitInFlight = false;
+    shitConflictResolving = false;
+    shitDirty = true;
+    shitSaveFailed = true;
+    backupShitToLocal(shit.items, shit.revision);
+    if(shitCanUsePill()) setSaveStatus('error-save'); // leave a pending conflict/offline pill untouched
+    return;
+  }
+  const choice = confirm(msg);
+  let discard = false;
+  if(!choice && confirm('Wirklich die Server-Version laden und eigene neue Einträge verwerfen?')){
+    discard = true;
+  }
+  if(!discard && server && Array.isArray(server.items)){
+    // merge is the safe default: server entries keep their positions, ours are appended
+    const seqAtMerge = shitMoveSeq;
+    const nextItems = mergeShitItems(server.items, shit.items);
+    try{
+      const result = await postShitlist(nextItems, serverRevision);
+      // preserve edits that arrived while the request was in flight
+      const finalItems = mergeShitItems(nextItems, shit.items);
+      const changed = JSON.stringify(finalItems) !== JSON.stringify(nextItems);
+      shit.items = finalItems;
+      shit.revision = result.revision;
+      shitSaveFailed = false;
+      shitSaveErrorAlerted = false;
+      clearLocalShitBackup();
+      cacheShitToLocal(shit.items, result.revision);
+      if(lastWeekMoveToShit && lastWeekMoveToShit.seq <= seqAtMerge) lastWeekMoveToShit = null;
+      shitNeedsPaint = true;
+      renderShit();
+      if(shitMergeOverflow && shitMergeOverflow.length){
+        // entries over the 400 cap could not be merged — say so, they are lost
+        alert(`Die Shit-Liste ist voll (max 400): ${shitMergeOverflow.length} Einträge konnten beim Zusammenführen nicht übernommen werden.`);
+        shitMergeOverflow = null;
+      }
+      if(changed){
+        shitDirty = true;
+        scheduleShitSave();
+      }
+    }catch(e){
+      shitDirty = true; // keep the retry alive via the status pill
+      shitSaveFailed = true;
+      backupShitToLocal(shit.items, shit.revision);
+      if(shitCanUsePill()) setSaveStatus('error-save'); // leave a pending conflict/offline pill untouched
+      console.error('Shit-Liste Konflikt konnte nicht aufgelöst werden', e);
+    }
+  }else{
+    // discard confirmed: load the server state as-is — no POST, nothing can be wiped
+    if(server && Array.isArray(server.items)){
+      shit = normalizeShit({ items: server.items });
+      shit.revision = server.revision || (response.revision || 0);
+      shitSaveFailed = false;
+      shitSaveErrorAlerted = false;
+      clearLocalShitBackup();
+      cacheShitToLocal(shit.items, shit.revision);
+      reinsertWeekMoveIntoShit();
+      shitNeedsPaint = true;
+    }else{
+      shitDirty = true; // nothing to load: keep local edits for a later retry
+    }
+  }
+  shitInFlight = false;
+  shitConflictResolving = false;
+  renderShit();
+  if(shitDirty || shitReDirty){
+    shitReDirty = false;
+    shitDirty = true;
+    if(!shitSaveFailed) scheduleShitSave();
+  }
+}
+
+function loadShitFromLocal(){
+  try{
+    const raw = localStorage.getItem('wp_shit_cache');
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    if(!parsed || !Array.isArray(parsed.items)) return null;
+    if(Date.now() - (parsed.savedAt || 0) > BACKUP_TTL_MS){
+      localStorage.removeItem('wp_shit_cache');
+      return null;
+    }
+    return parsed;
+  }catch(_){ return null; }
+}
+function cacheShitToLocal(items, revision){
+  try{
+    localStorage.setItem('wp_shit_cache', JSON.stringify({ items, revision, savedAt: Date.now() }));
+  }catch(_){}
+}
+
+function renderShit(){
+  const count = shit && shit.items ? shit.items.filter(i => !isItemEmpty(i)).length : 0;
+  shitCount.textContent = count ? `(${count})` : '';
+  if(!isShitSectionOpen()){
+    // collapsed: only keep the count fresh, no cell DOM until opened
+    if(shitBody.childElementCount) shitBody.innerHTML = '';
+    return;
+  }
+  if(!shitNeedsPaint) return; // nothing changed since the last build
+  shitNeedsPaint = false;
+  shitBody.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'shit-grid';
+  const total = shitCellCount();
+  for(let i = 0; i < total; i++){
+    const item = getShitItem(i);
+    const empty = isItemEmpty(item);
+    const cell = document.createElement('div');
+    cell.className = 'shit-cell' + (empty ? ' empty' : '');
+    cell.dataset.locType = 'shit';
+    cell.dataset.locIndex = i;
+    const meta = formatMeta(item);
+    cell.innerHTML = `
+      <div class="shit-entry-wrap" data-open-shit="${i}">
+        <div class="shit-text${item.done ? ' done' : ''}" data-placeholder="…">${escapeHtml(firstLine(item.text))}</div>
+        ${meta ? `<div class="meta">${escapeHtml(meta)}</div>` : ''}
+      </div>
+      <button class="del-btn" data-del-shit="${i}" title="Eintrag leeren">✕</button>
+    `;
+    grid.appendChild(cell);
+  }
+  shitBody.appendChild(grid);
+  attachShitHandlers();
+}
+
+function attachShitHandlers(){
+  shitBody.querySelectorAll('[data-open-shit]').forEach(el => {
+    el.addEventListener('click', () => {
+      if(moveSource || isClickSuppressed()) return;
+      if(!shit || !Array.isArray(shit.items)){ loadShit(); return; }
+      openModal({type:'shit', index: parseInt(el.dataset.openShit)});
+    });
+  });
+  shitBody.querySelectorAll('.del-btn').forEach(el => {
+    el.addEventListener('click', () => {
+      if(isClickSuppressed()) return;
+      if(shitConflictResolving){ flashFooterHint('Konfliktauflösung läuft — bitte kurz warten.'); return; }
+      setShitItem(parseInt(el.dataset.delShit), emptySlot());
+      scheduleShitSave();
+      renderShit();
+    });
+  });
+  shitBody.querySelectorAll('[data-loc-type="shit"]').forEach(el => {
+    el.addEventListener('pointerdown', onRowPointerDown);
+  });
+}
+
+function isShitSectionOpen(){ return shitBody.classList.contains('open'); }
+function openShitSection(){
+  if(isShitSectionOpen()) return;
+  shitBody.classList.add('open');
+  shitToggle.textContent = 'ausblenden';
+  shitHead.setAttribute('aria-expanded', 'true');
+  try{ localStorage.setItem('wp_shit_open', '1'); }catch(_){}
+  shitNeedsPaint = true;
+  if(!shit) loadShit();
+  renderShit();
+}
+function toggleShitSection(){
+  if(isShitSectionOpen()){
+    shitBody.classList.remove('open');
+    shitToggle.textContent = 'anzeigen';
+    shitHead.setAttribute('aria-expanded', 'false');
+    try{ localStorage.setItem('wp_shit_open', '0'); }catch(_){}
+    if(moveSource && moveSource.type === 'shit') cancelMove(); // cells vanish, week moves continue
+    return;
+  }
+  openShitSection();
+}
+shitHead.addEventListener('click', toggleShitSection);
+shitHead.addEventListener('keydown', (e) => {
+  if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggleShitSection(); }
+});
+
 /* ===================== MOVE (long-press + tap target) ===================== */
 
 const LONG_PRESS_MS = 350;
@@ -1221,6 +1820,7 @@ function readLoc(el){
   if(type === 'day') return {type:'day', day: el.dataset.locDay, index: parseInt(el.dataset.locIndex)};
   if(type === 'note') return {type:'note', section: el.dataset.locSection, id: el.dataset.locId};
   if(type === 'notelist') return {type:'notelist', section: el.dataset.locSection};
+  if(type === 'shit') return {type:'shit', index: parseInt(el.dataset.locIndex)};
   return null;
 }
 function sameLoc(a, b){
@@ -1228,6 +1828,7 @@ function sameLoc(a, b){
   if(a.type === 'day') return a.day === b.day && a.index === b.index;
   if(a.type === 'note') return a.section === b.section && a.id === b.id;
   if(a.type === 'notelist') return a.section === b.section;
+  if(a.type === 'shit') return a.index === b.index;
   return false;
 }
 function getValue(loc){
@@ -1236,6 +1837,7 @@ function getValue(loc){
     const item = data.notes[loc.section].find(i => i.id === loc.id);
     return item ? {text:item.text, date:item.date, time:item.time, done:item.done} : {text:'', date:'', time:'', done:false};
   }
+  if(loc.type === 'shit') return getShitItem(loc.index);
   return {text:'', date:'', time:'', done:false};
 }
 function setDaySlot(loc, val){
@@ -1289,12 +1891,44 @@ function performMove(sourceLoc, targetLoc){
     insertNoteItem(targetLoc, sourceVal, beforeId);
     return;
   }
+  if(sourceLoc.type === 'shit' && targetLoc.type === 'shit'){
+    const targetVal = getValue(targetLoc);
+    setShitItem(targetLoc.index, sourceVal);
+    setShitItem(sourceLoc.index, targetVal);
+    return;
+  }
+  if(sourceLoc.type === 'day' && targetLoc.type === 'shit'){
+    const targetVal = getValue(targetLoc);
+    setDaySlot(sourceLoc, targetVal);
+    setShitItem(targetLoc.index, sourceVal);
+    return;
+  }
+  if(sourceLoc.type === 'shit' && targetLoc.type === 'day'){
+    const targetVal = getValue(targetLoc);
+    setShitItem(sourceLoc.index, targetVal);
+    setDaySlot(targetLoc, sourceVal);
+    return;
+  }
+  if(sourceLoc.type === 'note' && targetLoc.type === 'shit'){
+    // cross-store swaps into occupied cells are blocked in commitMove, so a
+    // note→shit move never leaves a displaced value to preserve
+    removeNoteLoc(sourceLoc);
+    setShitItem(targetLoc.index, sourceVal);
+    return;
+  }
+  if(sourceLoc.type === 'shit' && (targetLoc.type === 'note' || targetLoc.type === 'notelist')){
+    const beforeId = targetLoc.type === 'note' ? targetLoc.id : null;
+    insertNoteItem(targetLoc, sourceVal, beforeId);
+    setShitItem(sourceLoc.index, emptySlot());
+    return;
+  }
 }
 
 function isValidDropTarget(el){
   const type = el.dataset.locType;
   if(!type) return false;
   if(type === 'day') return true;
+  if(type === 'shit') return true;
   if(type === 'note' || type === 'notelist'){
     return DRAG_SECTIONS.includes(el.dataset.locSection);
   }
@@ -1308,6 +1942,7 @@ function onRowPointerDown(e){
   const sourceRow = e.currentTarget;
   const sourceLoc = readLoc(sourceRow);
   if(!sourceLoc || sourceLoc.type === 'notelist') return;
+  if(sourceLoc.type === 'shit' && shitConflictResolving) return; // no stale move sources
   if(isItemEmpty(getValue(sourceLoc))) return;
 
   const startX = e.clientX;
@@ -1377,11 +2012,126 @@ function onMoveModeClick(e){
   commitMove(targetLoc);
 }
 
+let footerFlashTimer = null;
+function flashFooterHint(text){
+  const footer = document.getElementById('footerNote');
+  if(!footer) return;
+  footer.textContent = text;
+  if(footerFlashTimer) clearTimeout(footerFlashTimer);
+  footerFlashTimer = setTimeout(applyMoveHighlight, 2500);
+}
+
 function commitMove(targetLoc){
-  performMove(moveSource, targetLoc);
+  const sourceLoc = moveSource;
+  const touchesShit = sourceLoc.type === 'shit' || targetLoc.type === 'shit';
+  if(touchesShit && (!shit || !Array.isArray(shit.items))){
+    // Backlog not loaded yet: cancel and (re)load — the move can be repeated.
+    moveSource = null;
+    applyMoveHighlight();
+    loadShit();
+    return;
+  }
+  if(targetLoc.type === 'shit' && targetLoc.index >= SHIT_MAX_ITEMS){
+    // unreachable target (the grid renders at most SHIT_MAX_ITEMS cells)
+    moveSource = null;
+    applyMoveHighlight();
+    flashFooterHint('Die Shit-Liste ist voll (max 400 Einträge).');
+    return;
+  }
+  if(targetLoc.type === 'shit' && shitConflictResolving){
+    // the merge replaces the list layout — retry the move after resolution
+    moveSource = null;
+    applyMoveHighlight();
+    flashFooterHint('Konfliktauflösung läuft — bitte kurz warten.');
+    return;
+  }
+  const movedFromShit = sourceLoc.type === 'shit' ? getShitItem(sourceLoc.index) : null;
+  const movedFromWeek = (sourceLoc.type !== 'shit' && targetLoc.type === 'shit') ? getValue(sourceLoc) : null;
+  const crossesStores = (sourceLoc.type === 'shit') !== (targetLoc.type === 'shit');
+  const targetIsList = targetLoc.type === 'note' || targetLoc.type === 'notelist';
+  if(crossesStores && !targetIsList && !isItemEmpty(getValue(targetLoc))){
+    // a cross-store swap into an occupied cell would orphan the displaced entry
+    moveSource = null;
+    applyMoveHighlight();
+    flashFooterHint('Zielzelle belegt — zuerst freiräumen.');
+    return;
+  }
+  performMove(sourceLoc, targetLoc);
+  rememberShitMoveToWeek(movedFromShit, movedFromWeek, targetLoc);
   moveSource = null;
-  scheduleSave();
+  const touchesWeek = sourceLoc.type !== 'shit' || targetLoc.type !== 'shit';
+  if(touchesWeek) scheduleSave();
+  if(touchesShit) scheduleShitSave();
   requestAnimationFrame(() => render());
+}
+
+// Snapshot of the last shit→week move; used to re-insert the moved entry
+// when a week conflict resolution reverts the week (cross-store safety net).
+let lastShitMoveToWeek = null;
+let lastWeekMoveToShit = null;
+// One rescue record per direction; records are only cleared via the seq check
+// after the corresponding save succeeded — unrelated moves never wipe them.
+function rememberShitMoveToWeek(movedFromShit, movedFromWeek, targetLoc){
+  if(targetLoc.type === 'shit'){
+    if(movedFromWeek) lastWeekMoveToShit = { val: movedFromWeek, seq: ++shitMoveSeq };
+    return;
+  }
+  if(!movedFromShit){ return; }
+  lastShitMoveToWeek = {
+    val: movedFromShit,
+    week: weekParam(currentWeekStart),
+    day: targetLoc.type === 'day' ? targetLoc.day : null,
+    index: targetLoc.type === 'day' ? targetLoc.index : null,
+    section: (targetLoc.type === 'note' || targetLoc.type === 'notelist') ? targetLoc.section : null,
+    seq: ++shitMoveSeq
+  };
+}
+// Re-inserts the entry of the last shit→week move when a week conflict
+// resolution reverts the week — otherwise the entry was lost in both stores.
+function reinsertShitMoveIntoWeek(){
+  const moved = lastShitMoveToWeek;
+  lastShitMoveToWeek = null;
+  if(!moved || !moved.val || isItemEmpty(moved.val)) return;
+  if(moved.week && moved.week !== weekParam(currentWeekStart)){
+    return; // the record belongs to a different week — not this conflict
+  }
+  // Only look inside the move's own target: an identical entry elsewhere is an
+  // unrelated item ("two Milch") and must not block the rescue.
+  const targetKey = shitContentKey(moved.val, false);
+  const sameItem = (a) => a && !isItemEmpty(a) && shitContentKey(a, false) === targetKey;
+  const alreadyThere = moved.day
+    ? (data.days[moved.day] || []).some(sameItem)
+    : (moved.section ? (data.notes[moved.section] || []).some(sameItem) : false);
+  if(alreadyThere) return; // another device already persisted this move
+  if(moved.day){
+    let idx = data.days[moved.day].findIndex(isItemEmpty);
+    if(idx === -1){
+      // no free slot anymore: fall back to appending in Diverses
+      data.notes.Diverses.push({id: uid(), text: moved.val.text, date: moved.val.date, time: moved.val.time, done: moved.val.done});
+    }else{
+      data.days[moved.day][idx] = {text: moved.val.text || '', date: moved.val.date || '', time: moved.val.time || '', done: !!moved.val.done};
+    }
+  }else if(moved.section){
+    data.notes[moved.section] = data.notes[moved.section] || [];
+    data.notes[moved.section].push({id: uid(), text: moved.val.text, date: moved.val.date, time: moved.val.time, done: moved.val.done});
+  }
+}
+
+// Re-appends the entry of the last week→backlog move when the backlog
+// conflict resolution loads the server state (which never contained it).
+function reinsertWeekMoveIntoShit(){
+  const moved = lastWeekMoveToShit;
+  lastWeekMoveToShit = null;
+  if(!moved || !moved.val || isItemEmpty(moved.val)) return;
+  if(!shit || !Array.isArray(shit.items)) return;
+  // if the week→backlog save actually landed despite the conflict, skip the
+  // re-insert instead of adding a second copy
+  const targetKey = shitContentKey(moved.val, false);
+  const sameItem = (a) => a && !isItemEmpty(a) && shitContentKey(a, false) === targetKey;
+  if(shit.items.some(sameItem)) return;
+  shit.items.push({ text: moved.val.text || '', date: moved.val.date || '', time: moved.val.time || '', done: !!moved.val.done });
+  shitNeedsPaint = true;
+  shitDirty = true; // the end-of-conflict block re-saves the rescued entry
 }
 
 function cancelMove(){
@@ -1396,6 +2146,9 @@ function findLocElement(loc){
   }
   if(loc.type === 'note'){
     return document.querySelector(`[data-loc-type="note"][data-loc-section="${loc.section}"][data-loc-id="${loc.id}"]`);
+  }
+  if(loc.type === 'shit'){
+    return document.querySelector(`[data-loc-type="shit"][data-loc-index="${loc.index}"]`);
   }
   return null;
 }
@@ -1430,11 +2183,48 @@ const modalOverlay = document.getElementById('modalOverlay');
 const modalDate = document.getElementById('modalDate');
 const modalTime = document.getElementById('modalTime');
 const modalText = document.getElementById('modalText');
+const modalShitBtn = document.getElementById('modalShit');
 
 let modalLoc = null;
 let modalDoneState = false;
 
+// The 💩 button sends the item being edited to the global backlog.
+// Only for week items with text; pointless inside the backlog itself.
+function updateShitBtnState(){
+  // also requires the backlog to be loaded, so 💩 never discards entries silently
+  const enabled = !!modalLoc && modalLoc.type !== 'shit' && modalText.value.trim() !== ''
+    && !!(shit && Array.isArray(shit.items)) && shit.items.length < SHIT_MAX_ITEMS;
+  modalShitBtn.classList.toggle('off', !enabled);
+}
+
+// Takes the dialog's current text/time (the date is dropped so the entry stays
+// undated in the backlog), moves the item and clears its source location.
+function sendModalToShitlist(){
+  if(!modalLoc || modalLoc.type === 'shit' || modalSaving) return;
+  if(shitConflictResolving) return; // the merge would rewrite the backlog layout
+  if(!shit || !Array.isArray(shit.items)){ loadShit(); closeModal(); return; }
+  if(shit.items.length >= SHIT_MAX_ITEMS){
+    if(!shitCapAlerted){
+      shitCapAlerted = true;
+      alert('Die Shit-Liste ist voll (max 400 Einträge).');
+    }
+    return;
+  }
+  const val = { text: modalText.value, date: '', time: modalTime.value, done: modalDoneState };
+  if(!isItemEmpty(val)){
+    setShitItem(shit.items.length, val);
+    removeFromLocation(modalLoc);
+    lastWeekMoveToShit = { val: val, seq: ++shitMoveSeq };
+    scheduleShitSave();
+    scheduleSave();
+  }
+  closeModal();
+  openShitSection();
+  render();
+}
+
 function openModal(loc){
+  if(loc && loc.type === 'shit' && shitConflictResolving) return; // indices would go stale
   cancelMove();
   modalLoc = loc;
   const val = getValue(loc);
@@ -1442,13 +2232,22 @@ function openModal(loc){
   modalDate.value = val.date || '';
   modalTime.value = val.time || '';
   modalText.value = val.text || '';
+  updateShitBtnState();
   modalOverlay.classList.remove('hidden');
   requestAnimationFrame(() => modalText.focus());
 }
+modalText.addEventListener('input', updateShitBtnState);
 
 function closeModal(){
+  modalSaving = false;
   modalOverlay.classList.add('hidden');
   modalLoc = null;
+}
+// User-facing close (Cancel, overlay tap, Esc): refused while the dialog is
+// mid-save/relocation — source indices would drift while requests run.
+function requestCloseModal(){
+  if(modalSaving) return;
+  closeModal();
 }
 
 function applyValueInPlace(loc, val){
@@ -1457,6 +2256,8 @@ function applyValueInPlace(loc, val){
   } else if(loc.type === 'note'){
     const item = data.notes[loc.section].find(i => i.id === loc.id);
     if(item){ item.text = val.text; item.date = val.date; item.time = val.time; item.done = !!val.done; }
+  } else if(loc.type === 'shit'){
+    setShitItem(loc.index, val);
   }
 }
 function removeFromLocation(loc){
@@ -1465,27 +2266,58 @@ function removeFromLocation(loc){
   } else if(loc.type === 'note'){
     removeNoteItemById(loc.section, loc.id);
     if(data.notes[loc.section].length === 0) data.notes[loc.section].push(newNoteItem());
+  } else if(loc.type === 'shit'){
+    setShitItem(loc.index, emptySlot());
   }
 }
 
-// A day-grid item (or a note item in "Ausblick" / "Diverses") whose date is set
-// is relocated into that date's day column — same-week moves happen in memory,
-// moves into a different week are persisted directly against that week's stored data.
+// A day-grid item (a note item in "Ausblick"/"Diverses", or a shit-list cell)
+// whose date is set is relocated into that date's day column — same-week moves
+// happen in memory, moves into a different week are persisted directly against
+// that week's stored data.
 async function relocateToDay(sourceLoc, val, targetMonday, targetDay){
   const sameWeek = weekParam(targetMonday) === weekParam(currentWeekStart);
+  const isShitSource = sourceLoc.type === 'shit';
+  const sourceSnapshot = isShitSource ? getShitItem(sourceLoc.index) : null;
+  // While the cross-week requests run, the dialog can be interacted with and
+  // the list can change: only touch the source cell if it still holds the
+  // content captured at relocation start.
+  const shitCellUnchanged = () => {
+    if(!isShitSource) return true;
+    const cur = getShitItem(sourceLoc.index);
+    return (cur.text || '') === (sourceSnapshot.text || '')
+      && (cur.date || '') === (sourceSnapshot.date || '')
+      && (cur.time || '') === (sourceSnapshot.time || '')
+      && !!cur.done === !!sourceSnapshot.done;
+  };
+  const clearSourceIfUnchanged = () => {
+    if(shitCellUnchanged()){ removeFromLocation(sourceLoc); return; }
+    flashFooterHint('Der backlog-Eintrag hat sich geändert — Quelle nicht gelöscht. Bitte prüfen.');
+  };
+  const restoreSourceOrHint = () => {
+    if(shitCellUnchanged()){ applyValueInPlace(sourceLoc, val); return; }
+    flashFooterHint('Der backlog-Eintrag hat sich geändert — nicht überschrieben. Bitte prüfen.');
+  };
+  const saveChanges = () => {
+    // always save the week: the same-week branch changes it, and for unchanged
+    // content the hash-based idempotency makes the save a server-side no-op
+    scheduleSave();
+    if(isShitSource) scheduleShitSave();
+  };
 
   if(sameWeek){
     const idx = data.days[targetDay].findIndex(isItemEmpty);
     if(idx === -1){
       alert(`Kein freier Platz am ${targetDay}. Eintrag wurde nicht verschoben.`);
-      applyValueInPlace(sourceLoc, val);
-      scheduleSave();
+      restoreSourceOrHint();
+      saveChanges();
       render();
       return;
     }
-    removeFromLocation(sourceLoc);
+    clearSourceIfUnchanged();
     setDaySlot({type:'day', day: targetDay, index: idx}, val);
-    scheduleSave();
+    if(isShitSource) lastShitMoveToWeek = { val: val, day: targetDay, index: idx, week: weekParam(currentWeekStart), seq: ++shitMoveSeq };
+    saveChanges();
     render();
     return;
   }
@@ -1498,8 +2330,8 @@ async function relocateToDay(sourceLoc, val, targetMonday, targetDay){
     const idx = targetData.days[targetDay].findIndex(isItemEmpty);
     if(idx === -1){
       alert(`Kein freier Platz am ${targetDay} in der Zielwoche. Eintrag wurde nicht verschoben.`);
-      applyValueInPlace(sourceLoc, val);
-      scheduleSave();
+      restoreSourceOrHint();
+      saveChanges();
       render();
       return;
     }
@@ -1507,8 +2339,9 @@ async function relocateToDay(sourceLoc, val, targetMonday, targetDay){
       text: val.text || '', date: val.date || '', time: val.time || '', done: !!val.done
     };
     await postWeekData(targetMonday, targetData, targetRevision);
-    removeFromLocation(sourceLoc);
-    scheduleSave();
+    // clear only when the source cell still holds what was relocated
+    clearSourceIfUnchanged();
+    saveChanges();
     render();
     loadNextWeekPreview(); // the write may have landed in next week's data — refresh the lookahead
   }catch(e){
@@ -1521,8 +2354,8 @@ async function relocateToDay(sourceLoc, val, targetMonday, targetDay){
         if(idx !== -1){
           targetData.days[targetDay][idx] = {text: val.text || '', date: val.date || '', time: val.time || '', done: !!val.done};
           await postWeekData(targetMonday, targetData, reloaded.revision || 0);
-          removeFromLocation(sourceLoc);
-          scheduleSave();
+          clearSourceIfUnchanged();
+          saveChanges();
           render();
           loadNextWeekPreview();
           return;
@@ -1531,8 +2364,8 @@ async function relocateToDay(sourceLoc, val, targetMonday, targetDay){
     }
     console.error('Verschieben in andere Woche fehlgeschlagen', e);
     alert('Verschieben in die Zielwoche ist fehlgeschlagen. Eintrag bleibt hier.');
-    applyValueInPlace(sourceLoc, val);
-    scheduleSave();
+    restoreSourceOrHint();
+    saveChanges();
     render();
   }
 }
@@ -1548,8 +2381,18 @@ async function saveModal(){
     done: modalDoneState
   };
 
+  // empty backlog cell: don't store a meta-only husk, just clear it
+  if(loc.type === 'shit' && isItemEmpty(val)){
+    setShitItem(loc.index, emptySlot());
+    scheduleShitSave();
+    render();
+    closeModal();
+    return;
+  }
+
   const relocatable = !!val.date && (
-    loc.type === 'day' || (loc.type === 'note' && (loc.section === 'Ausblick' || loc.section === 'Diverses'))
+    loc.type === 'day' || loc.type === 'shit' ||
+    (loc.type === 'note' && (loc.section === 'Ausblick' || loc.section === 'Diverses'))
   );
 
   modalSaving = true;
@@ -1566,7 +2409,7 @@ async function saveModal(){
       }
     }
     applyValueInPlace(loc, val);
-    scheduleSave();
+    if(loc.type === 'shit') scheduleShitSave(); else scheduleSave();
     render();
     closeModal();
   } finally {
@@ -1575,28 +2418,31 @@ async function saveModal(){
 }
 
 function clearModal(){
-  if(!modalLoc) return;
+  if(!modalLoc || modalSaving) return;
   if(modalLoc.type === 'day'){
     setDaySlot(modalLoc, emptySlot());
   } else if(modalLoc.type === 'note'){
     const item = data.notes[modalLoc.section].find(i => i.id === modalLoc.id);
     if(item){ item.text = ''; item.date = ''; item.time = ''; item.done = false; }
+  } else if(modalLoc.type === 'shit'){
+    setShitItem(modalLoc.index, emptySlot());
   }
-  scheduleSave();
+  if(modalLoc.type === 'shit') scheduleShitSave(); else scheduleSave();
   render();
   closeModal();
 }
 
 document.getElementById('modalSave').addEventListener('click', saveModal);
-document.getElementById('modalCancel').addEventListener('click', closeModal);
+document.getElementById('modalCancel').addEventListener('click', requestCloseModal);
 document.getElementById('modalClear').addEventListener('click', clearModal);
+document.getElementById('modalShit').addEventListener('click', sendModalToShitlist);
 modalOverlay.addEventListener('click', (e) => {
-  if(e.target === modalOverlay) closeModal();
+  if(e.target === modalOverlay) requestCloseModal();
 });
 document.addEventListener('keydown', (e) => {
   if(moveSource && e.key === 'Escape'){ cancelMove(); return; }
   if(modalOverlay.classList.contains('hidden')) return;
-  if(e.key === 'Escape') closeModal();
+  if(e.key === 'Escape') requestCloseModal();
   if((e.metaKey || e.ctrlKey) && e.key === 'Enter') saveModal();
 });
 document.addEventListener('click', onMoveModeClick, true);
@@ -1719,8 +2565,9 @@ async function toggleWeekClosed(){
 closeWeekBtn.addEventListener('click', toggleWeekClosed);
 
 window.addEventListener('beforeunload', (e) => {
-  if(dirty || reDirty || saveInFlight){
+  if(dirty || reDirty || saveInFlight || shitDirty || shitReDirty || shitInFlight){
     flushSave();
+    flushShitSave();
     e.preventDefault();
     e.returnValue = '';
   }
@@ -1729,12 +2576,26 @@ window.addEventListener('beforeunload', (e) => {
 document.addEventListener('visibilitychange', () => {
   if(document.visibilityState === 'hidden'){
     flushSave();
-  }else if(document.visibilityState === 'visible' && !saveBlocked){
-    loadWeek();
+    flushShitSave();
+  }else if(document.visibilityState === 'visible'){
+    if(!saveBlocked) loadWeek(); // when blocked, the week retries on its next action
+    loadShit(); // independent store — refresh even when the week is blocked
   }
 });
 
 loadWeek();
+loadShit();
+
+// Restore the open/closed state of the shit-list section
+try{
+  if(localStorage.getItem('wp_shit_open') === '1'){
+    shitBody.classList.add('open');
+    shitToggle.textContent = 'ausblenden';
+    shitHead.setAttribute('aria-expanded', 'true');
+    shitNeedsPaint = true;
+    renderShit();
+  }
+}catch(_){}
 </script>
 </body>
 </html>
